@@ -37,6 +37,7 @@ pub struct Bridge {
     saved: Rc<RefCell<Vec<String>>>,
     /// The unsaved-changes state last reported to the parent.
     reported: Rc<Cell<Option<bool>>>,
+    theme: Rc<Cell<Option<bool>>>,
 }
 
 impl Bridge {
@@ -48,7 +49,7 @@ impl Bridge {
             return None;
         }
         let origin = window.location().origin().ok()?;
-        Some(Self { window, parent, origin, saved: Rc::default(), reported: Rc::default() })
+        Some(Self { window, parent, origin, saved: Rc::default(), reported: Rc::default(), theme: Rc::default() })
     }
 
     /// Send saved and exported files to the parent instead of downloading them, and hear files
@@ -73,6 +74,12 @@ impl Bridge {
 
     pub fn post_ready(&self) {
         self.send(&[("type", "gridcraft:ready".into()), ("version", env!("CARGO_PKG_VERSION").into())]);
+        self.send(&[("type", "inbound:theme:ready".into()), ("version", 1.into())]);
+    }
+
+    /// Take the latest theme mode sent by the framing host.
+    pub fn take_theme(&self) -> Option<bool> {
+        self.theme.take()
     }
 
     pub fn post_failed(&self, error: &str) {
@@ -112,11 +119,21 @@ impl Bridge {
     fn listen(&self, inbox: Inbox, ctx: egui::Context) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
+        let theme = self.theme.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
             if event.origin() != origin || !event.source().is_some_and(|s| js_sys::Object::is(&s, &parent)) {
                 return;
             }
             let data = event.data();
+            if string(&data, "type").as_deref() == Some("inbound:theme:set") {
+                if js_sys::Reflect::get(&data, &JsValue::from_str("version")).ok().and_then(|v| v.as_f64()) == Some(1.0)
+                    && let Some(mode) = string(&data, "mode")
+                    && matches!(mode.as_str(), "light" | "dark")
+                {
+                    theme.set(Some(mode == "dark"));
+                }
+                return;
+            }
             if string(&data, "type").as_deref() != Some("gridcraft:open") {
                 return;
             }

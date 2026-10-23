@@ -39,18 +39,24 @@ pub struct PrefsSync {
     prefs: Option<String>,
     /// The user name to store in place of the session's (see [`Self::keep_user_name`]).
     user_name: Option<String>,
+    suppress_ui: bool,
 }
 
 impl PrefsSync {
     /// Starts from what is already stored, so restoring doesn't write it straight back.
     pub fn new(ui: Option<String>, prefs: Option<String>) -> Self {
-        Self { ui, prefs, user_name: None }
+        Self { ui, prefs, user_name: None, suppress_ui: false }
     }
 
     /// Stores `name` as the user name whatever the session's becomes: under `?host=parent` the
     /// framing page names the author for this visit only, and must not replace the user's own.
     pub fn keep_user_name(&mut self, name: String) {
         self.user_name = Some(name);
+    }
+
+    /// Host theme choices are session-only; avoid persisting host-controlled UI state.
+    pub fn suppress_ui(&mut self) {
+        self.suppress_ui = true;
     }
 
     /// The `(key, JSON)` pairs to store because they differ from what was last written.
@@ -61,6 +67,9 @@ impl PrefsSync {
             None => serde_json::to_string(&app.session.prefs),
         };
         for (key, last, json) in [(UI_KEY, &mut self.ui, serde_json::to_string(&app.ui)), (PREFS_KEY, &mut self.prefs, prefs)] {
+            if key == UI_KEY && self.suppress_ui {
+                continue;
+            }
             match json {
                 Ok(json) if last.as_deref() != Some(json.as_str()) => {
                     *last = Some(json.clone());

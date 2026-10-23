@@ -139,6 +139,14 @@ impl eframe::App for WebShell {
                 }
             });
         }
+        if let Some(dark) = self.bridge.as_ref().and_then(crate::host::Bridge::take_theme) {
+            let mode = if dark { "dark" } else { "light" };
+            if let Err(e) = self.app.run("view.theme", serde_json::json!({"mode": mode})) {
+                log::warn!("host theme: {e}");
+            } else {
+                self.prefs.suppress_ui();
+            }
+        }
         self.app.logic(ctx);
         // Store changed preferences straight away: a reload or closed tab runs no exit code (#1562).
         let changed = self.prefs.changed(&self.app);
