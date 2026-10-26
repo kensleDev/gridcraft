@@ -74,6 +74,29 @@ impl Bridge {
 
     pub fn post_ready(&self) {
         self.send(&[("type", "gridcraft:ready".into()), ("version", env!("CARGO_PKG_VERSION").into())]);
+        self.post_theme_ready();
+    }
+
+    pub fn listen_theme(&self, ctx: egui::Context) {
+        let parent = self.parent.clone();
+        let origin = self.origin.clone();
+        let theme = self.theme.clone();
+        let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
+            if event.origin() != origin || !event.source().is_some_and(|source| js_sys::Object::is(&source, &parent)) {
+                return;
+            }
+            if let Some(dark) = theme_mode(&event.data()) {
+                theme.set(Some(dark));
+                ctx.request_repaint();
+            }
+        });
+        if self.window.add_event_listener_with_callback("message", on_message.as_ref().unchecked_ref()).is_ok() {
+            on_message.forget();
+            self.post_theme_ready();
+        }
+    }
+
+    fn post_theme_ready(&self) {
         self.send(&[("type", "inbound:theme:ready".into()), ("version", 1.into())]);
     }
 
@@ -126,11 +149,9 @@ impl Bridge {
             }
             let data = event.data();
             if string(&data, "type").as_deref() == Some("inbound:theme:set") {
-                if js_sys::Reflect::get(&data, &JsValue::from_str("version")).ok().and_then(|v| v.as_f64()) == Some(1.0)
-                    && let Some(mode) = string(&data, "mode")
-                    && matches!(mode.as_str(), "light" | "dark")
-                {
-                    theme.set(Some(mode == "dark"));
+                if let Some(dark) = theme_mode(&data) {
+                    theme.set(Some(dark));
+                    ctx.request_repaint();
                 }
                 return;
             }
@@ -164,6 +185,28 @@ fn message(fields: &[(&str, JsValue)]) -> Option<js_sys::Object> {
         js_sys::Reflect::set(&m, &JsValue::from_str(key), value).ok()?;
     }
     Some(m)
+}
+
+fn theme_mode(data: &JsValue) -> Option<bool> {
+    if string(data, "type").as_deref() != Some("inbound:theme:set")
+        || !exact_shape(data, &["type", "version", "mode"])
+        || js_sys::Reflect::get(data, &JsValue::from_str("version")).ok()?.as_f64() != Some(1.0)
+    {
+        return None;
+    }
+    match string(data, "mode")?.as_str() {
+        "light" => Some(false),
+        "dark" => Some(true),
+        _ => None,
+    }
+}
+
+fn exact_shape(data: &JsValue, expected: &[&str]) -> bool {
+    if !data.is_object() || data.is_null() {
+        return false;
+    }
+    let keys = js_sys::Object::keys(&js_sys::Object::from(data.clone()));
+    keys.length() as usize == expected.len() && expected.iter().all(|key| keys.iter().any(|value| value.as_string().as_deref() == Some(key)))
 }
 
 fn string(data: &JsValue, key: &str) -> Option<String> {

@@ -38,8 +38,11 @@ pub fn start() {
         }
         // `?host=parent`: a same-origin page framing GridCraft (such as a Nextcloud app) opens
         // workbooks in it and stores what it saves (`host`).
-        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
+        let host_mode = query_param("host").as_deref() == Some("parent");
+        let bridge = if host_mode { crate::host::Bridge::new() } else { None };
+        let theme_bridge = if host_mode { None } else { crate::host::Bridge::new() };
         let app_bridge = bridge.clone();
+        let app_theme_bridge = theme_bridge.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -57,6 +60,9 @@ pub fn start() {
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone());
                     if let Some(bridge) = &app_bridge {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
+                    }
+                    if let Some(bridge) = &app_theme_bridge {
+                        bridge.listen_theme(cc.egui_ctx.clone());
                     }
                     let mut app = SheetApp::new(session, services);
                     app.ui.system_theme = true;
@@ -82,7 +88,7 @@ pub fn start() {
                         }
                         bridge.post_ready();
                     }
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, prefs }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, theme_bridge: app_theme_bridge, prefs }))
                 }),
             )
             .await;
@@ -110,6 +116,7 @@ struct WebShell {
     app: SheetApp,
     inbox: Inbox,
     bridge: Option<crate::host::Bridge>,
+    theme_bridge: Option<crate::host::Bridge>,
     prefs: crate::prefs::PrefsSync,
 }
 
@@ -139,7 +146,12 @@ impl eframe::App for WebShell {
                 }
             });
         }
-        if let Some(dark) = self.bridge.as_ref().and_then(crate::host::Bridge::take_theme) {
+        if let Some(dark) = self
+            .bridge
+            .as_ref()
+            .and_then(crate::host::Bridge::take_theme)
+            .or_else(|| self.theme_bridge.as_ref().and_then(crate::host::Bridge::take_theme))
+        {
             let mode = if dark { "dark" } else { "light" };
             if let Err(e) = self.app.run("view.theme", serde_json::json!({"mode": mode})) {
                 log::warn!("host theme: {e}");
